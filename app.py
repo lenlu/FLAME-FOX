@@ -26,13 +26,24 @@ try:
 except ImportError:
     GEMINI_AVAILABLE = False
 
+from login import check_authentication, show_login_page, logout
+
 st.set_page_config(page_title="Feeling → Meal/Music/Entertainment", layout="wide")
+
+# -------------------------
+# Authentication Check
+# -------------------------
+if not check_authentication():
+    show_login_page()
+    st.stop()
 st.title("🎭 Feeling → Meal · Music · Entertainment")
 st.write("Describe your feeling and get a meal (with recipe), a music playlist, and entertainment picks (movie/anime/series) — all aligned with your feeling and preferences.")
 
 # -------------------------
 # Sidebar: API & options
 # -------------------------
+st.sidebar.write(f"👤 **Logged in as:** {st.session_state.get('username', 'User')}")
+st.sidebar.markdown("---")
 provider = st.sidebar.selectbox("AI Provider", ["Google Gemini", "OpenAI"], index=0)
 api_key = st.sidebar.text_input(f"{provider} API Key", type="password", value=os.getenv(f"{provider.upper().replace(' ', '_')}_API_KEY", ""))
 if provider == "OpenAI":
@@ -46,6 +57,9 @@ strictness = st.sidebar.slider("Mapping Strictness", 0, 100, 70)
 st.sidebar.write("Higher = more rule-driven anchors; Lower = more LLM freedom.")
 st.sidebar.markdown("---")
 st.sidebar.write("Tip: Add entertainment likes (genres, shows, actors) to bias recommendations.")
+st.sidebar.markdown("---")
+if st.sidebar.button("🔓 Logout", use_container_width=True):
+    logout()
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Made by Team FLAME FOX**")
 
