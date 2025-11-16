@@ -104,7 +104,7 @@ def show_login_page():
         with tab2:
             st.subheader("Try Demo Mode")
             st.write("Experience FLAME FOX with pre-set demo credentials:")
-            st.info("**Username:** demo  \n**Password:** demo")
+            st.info("**Username:**/**Password:** [GIVEN IN THE README FILE]")
             
             if st.button("🚀 Enter Demo Mode", use_container_width=True):
                 st.session_state['authenticated'] = True
