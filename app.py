@@ -1,6 +1,6 @@
 """
-Unified Mood → Meal / Music / Entertainment Streamlit App
-- Enter mood text
+Unified Feeling → Meal / Music / Entertainment Streamlit App
+- Enter feeling text
 - Optionally provide entertainment likes (genres, shows, actors)
 - Choose outputs (meal, music, entertainment)
 - App uses a small rulebook + OpenAI LLM to generate structured recommendations + reasoning
@@ -19,19 +19,29 @@ Notes:
 import streamlit as st
 from openai import OpenAI
 import json
+import os
+try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
 
-st.set_page_config(page_title="Mood → Meal/Music/Entertainment", layout="wide")
-st.title("🎭 Mood → Meal · Music · Entertainment")
-st.write("Describe your mood and get a meal (with recipe), a music playlist, and entertainment picks (movie/anime/series) — all aligned with your mood and preferences.")
+st.set_page_config(page_title="Feeling → Meal/Music/Entertainment", layout="wide")
+st.title("🎭 Feeling → Meal · Music · Entertainment")
+st.write("Describe your feeling and get a meal (with recipe), a music playlist, and entertainment picks (movie/anime/series) — all aligned with your feeling and preferences.")
 
 # -------------------------
 # Sidebar: API & options
 # -------------------------
-api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-model_choice = st.sidebar.selectbox("Model", ["gpt-4.1", "gpt-4.1-mini", "gpt-o1"], index=0)
-mock_mode = st.sidebar.checkbox("Developer mock/test mode (no API key)", value=False, help="When enabled the app returns canned outputs for development without calling OpenAI.")
+provider = st.sidebar.selectbox("AI Provider", ["Google Gemini", "OpenAI"], index=0)
+api_key = st.sidebar.text_input(f"{provider} API Key", type="password", value=os.getenv(f"{provider.upper().replace(' ', '_')}_API_KEY", ""))
+if provider == "OpenAI":
+    model_choice = st.sidebar.selectbox("Model", ["gpt-4.1", "gpt-4.1-mini", "gpt-o1"], index=0)
+else:
+    model_choice = st.sidebar.selectbox("Model", ["gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash"], index=0)
+mock_mode = st.sidebar.checkbox("Developer mock/test mode (no API key)", value=False, help="When enabled the app returns canned outputs for development without calling any LLM.")
 st.sidebar.markdown("---")
-st.sidebar.write("Mapping strictness controls how much the system adheres to the built-in mood rules vs LLM nuance.")
+st.sidebar.write("Mapping strictness controls how much the system adheres to the built-in feeling rules vs LLM nuance.")
 strictness = st.sidebar.slider("Mapping Strictness", 0, 100, 70)
 st.sidebar.write("Higher = more rule-driven anchors; Lower = more LLM freedom.")
 st.sidebar.markdown("---")
@@ -40,15 +50,22 @@ st.sidebar.markdown("---")
 st.sidebar.markdown("**Made by Team FLAME FOX**")
 
 if not api_key and not mock_mode:
-    st.warning("Please enter your OpenAI API key in the sidebar to use the app (or enable mock/test mode).")
+    st.warning(f"Please enter your {provider} API key in the sidebar to use the app (or enable mock/test mode).")
     st.stop()
 
 client = None
 if not mock_mode:
-    client = OpenAI(api_key=api_key)
+    if provider == "Google Gemini":
+        if not GEMINI_AVAILABLE:
+            st.error("google-generativeai package not installed. Run: pip install google-generativeai")
+            st.stop()
+        genai.configure(api_key=api_key)
+        client = genai.GenerativeModel(model_choice)
+    else:
+        client = OpenAI(api_key=api_key)
 
 # -------------------------
-# Human-designed mood -> anchor rules (editable)
+# Human-designed feeling -> anchor rules (editable)
 # -------------------------
 MOOD_RULES = {
     "energy": {
@@ -105,27 +122,36 @@ MOOD_RULES = {
 def call_llm(prompt: str, model: str = None, max_tokens: int = 700):
     model = model or model_choice
     try:
-        resp = client.responses.create(model=model, input=prompt, max_output_tokens=max_tokens)
-        # `resp.output_text` is a convenience in some client versions — fallback to content traversal
-        if hasattr(resp, 'output_text'):
-            return resp.output_text
-        # try to extract text from choices / output
-        if hasattr(resp, 'output') and isinstance(resp.output, list) and len(resp.output) > 0:
-            # join any text content
-            parts = []
-            for item in resp.output:
-                if isinstance(item, dict) and item.get('content'):
-                    for c in item['content']:
-                        if c.get('type') == 'output_text' and c.get('text'):
-                            parts.append(c.get('text'))
-            if parts:
-                return "\n".join(parts)
-        return str(resp)
+        if provider == "Google Gemini":
+            # Use Gemini API
+            response = client.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(max_output_tokens=max_tokens)
+            )
+            return response.text
+        else:
+            # Use OpenAI API
+            resp = client.responses.create(model=model, input=prompt, max_output_tokens=max_tokens)
+            # `resp.output_text` is a convenience in some client versions — fallback to content traversal
+            if hasattr(resp, 'output_text'):
+                return resp.output_text
+            # try to extract text from choices / output
+            if hasattr(resp, 'output') and isinstance(resp.output, list) and len(resp.output) > 0:
+                # join any text content
+                parts = []
+                for item in resp.output:
+                    if isinstance(item, dict) and item.get('content'):
+                        for c in item['content']:
+                            if c.get('type') == 'output_text' and c.get('text'):
+                                parts.append(c.get('text'))
+                if parts:
+                    return "\n".join(parts)
+            return str(resp)
     except Exception as e:
         return f"ERROR: {e}"
 
 # -------------------------
-# Mood analysis
+# Feeling analysis
 # -------------------------
 def heuristic_mood_parse(text: str):
     t = text.lower()
@@ -153,9 +179,9 @@ def heuristic_mood_parse(text: str):
 
     return {"energy": energy, "valence": valence, "stress": stress, "sensory": sensory}
 
-# LLM fallback to parse mood in ambiguous cases or to refine heuristics
+# LLM fallback to parse feeling in ambiguous cases or to refine heuristics
 MOOD_PARSE_PROMPT = '''
-You are a concise assistant that converts a short mood description into three axes.
+You are a concise assistant that converts a short feeling description into three axes.
 Return JSON only:
 
 {{
@@ -165,7 +191,7 @@ Return JSON only:
  "sensory": "comma-separated short keywords or empty"
 }}
 
-Mood description:
+Feeling description:
 """{mood_text}"""
 '''
 
@@ -214,9 +240,9 @@ def anchors_for(parsed, domain):
 # -------------------------
 MEAL_PROMPT = """
 You are a friendly culinary assistant. Input:
-- mood_text: {mood}
-- mood_anchors: {anchors}
-- constraint: keep prep time under 30 minutes unless mood explicitly calls for slow cooking.
+- feeling_text: {mood}
+- feeling_anchors: {anchors}
+- constraint: keep prep time under 30 minutes unless the feeling explicitly calls for slow cooking.
  - dietary: {dietary}
  - time_of_day: {time_of_day}
 
@@ -234,8 +260,8 @@ Produce JSON ONLY:
 
 MUSIC_PROMPT = """
 You are a concise music recommender. Input:
-- mood_text: {mood}
-- mood_anchors: {anchors}
+- feeling_text: {mood}
+- feeling_anchors: {anchors}
 
 Produce JSON ONLY:
 {{
@@ -248,8 +274,8 @@ Produce JSON ONLY:
 ENTERTAINMENT_PROMPT = """
 You are a helpful entertainment recommender.
 Input:
-- mood_text: {mood}
-- mood_anchors: {anchors}
+- feeling_text: {mood}
+- feeling_anchors: {anchors}
 - user_likes: {likes}   # a short user preference string; can be empty
 
 Produce JSON ONLY: a list of three recommendations (movie / anime / series) ranked 1..3.
@@ -257,7 +283,7 @@ Each recommendation must include:
 - title (title + year if available)
 - type ("movie" / "anime" / "series")
 - one-sentence synopsis (no spoilers)
-- two-sentence reasoning why it suits the mood and how it aligns with user_likes (if provided)
+- two-sentence reasoning why it suits the feeling and how it aligns with user_likes (if provided)
 - suggested viewing context (e.g., "alone, with friends, snack suggestions, time of day")
 
 Return JSON array: [ {{...}}, {{...}}, {{...}} ]
@@ -290,7 +316,7 @@ def generate_meal(mood_text, parsed):
 
 def generate_music(mood_text, parsed):
     anchors = anchors_for(parsed, "music")
-    anchor_text = "; ".join(anchors) if anchors else "mood-aligned music"
+    anchor_text = "; ".join(anchors) if anchors else "feeling-aligned music"
     prompt = MUSIC_PROMPT.format(mood=mood_text, anchors=anchor_text)
     if mock_mode:
         return {
@@ -307,7 +333,7 @@ def generate_music(mood_text, parsed):
 
 def generate_entertainment(mood_text, parsed, user_likes):
     anchors = anchors_for(parsed, "entertainment")
-    anchor_text = "; ".join(anchors) if anchors else "mood-aligned entertainment"
+    anchor_text = "; ".join(anchors) if anchors else "feeling-aligned entertainment"
     likes_text = user_likes if user_likes else ""
     prompt = ENTERTAINMENT_PROMPT.format(mood=mood_text, anchors=anchor_text, likes=likes_text)
     if mock_mode:
@@ -331,13 +357,13 @@ def generate_entertainment(mood_text, parsed, user_likes):
 # UI: Inputs
 # -------------------------
 st.subheader("Input")
-mood_input = st.text_area("Describe your current mood (e.g., 'slightly drained but hopeful')", height=120)
+mood_input = st.text_area("Describe your current feeling (e.g., 'slightly drained but hopeful')", height=120)
 user_likes = st.text_input("Entertainment likes (optional) — genres, shows, actors, or examples", placeholder="e.g., 'romcoms, Miyazaki, sci-fi, The Crown'")
 dietary = st.text_input("Dietary restrictions (optional)", placeholder="e.g., 'vegetarian, gluten-free, nut allergy'")
 time_of_day = st.selectbox("Time of day", ["any","breakfast","lunch","dinner","late night"], index=0)
 
-# Example mood presets for quick testing
-with st.expander("Example moods"):
+# Example feeling presets for quick testing
+with st.expander("Example feelings"):
     col_a, col_b, col_c = st.columns(3)
     if col_a.button("Cozy & tired"):
         mood_input = "tired, want something warm and cozy, low energy"
@@ -355,17 +381,17 @@ with col3:
 
 if st.button("Generate Recommendations"):
     if not mood_input.strip():
-        st.error("Please enter a mood description.")
+        st.error("Please enter a feeling description.")
         st.stop()
 
-    with st.spinner("Parsing mood..."):
+    with st.spinner("Parsing feeling..."):
         parsed = parse_mood(mood_input)
 
     # attach dietary/time to parsed for prompts
     parsed['dietary'] = dietary
     parsed['time_of_day'] = time_of_day
 
-    st.markdown("### 🧭 Parsed Mood Axes")
+    st.markdown("### 🧭 Parsed Feeling Axes")
     st.write(parsed)
 
     # Generate outputs
@@ -445,7 +471,7 @@ if st.button("Generate Recommendations"):
 
 # Footer
 st.markdown("---")
-st.write("Built with ❤️ — a unified mood→recommendation demo using OpenAI models. Edit the rulebook (MOOD_RULES) and prompts inline to customize behavior.")
+st.write("Built with ❤️ — a unified feeling→recommendation demo using OpenAI models. Edit the rulebook (MOOD_RULES) and prompts inline to customize behavior.")
 st.markdown("**Made by Team FLAME FOX**")
 
 # End
